@@ -5,40 +5,46 @@
 #include <limits>
 #include <random>
 #include <iostream>
+#include <type_traits>
 
-
-// Convert x from uint64_t to int64_t in standard-conforming way.
+// Convert x from uint64_t to T in standard-conforming way,
+// where T is int64_t or uint64_t.
 // Assumes target machine uses two's complement.
-inline int64_t toInt64(uint64_t x)
+template <typename T>
+inline T toInt64(uint64_t x)
 {
-	int64_t y;
+	T y;
 	std::memcpy(&y, &x, sizeof(y));
 	return y;
 }
 
-// Return x+y with wrap-around.
-inline int64_t wrappingAdd(int64_t x, int64_t y)
+// Return x+y with wrap-around
+template <typename T>
+inline T wrappingAdd(T x, int64_t y)
 {
-	return toInt64(static_cast<uint64_t>(x) + static_cast<uint64_t>(y));
+	return toInt64<T>(static_cast<uint64_t>(x) + static_cast<uint64_t>(y));
 }
 
-// Reference implementation of safeMultiplyInt64
-bool refSafeMultiplyInt64(int64_t x, int64_t y, int64_t* result)
+// Reference implementation of safeMultiplyInt64.
+template<typename T>
+bool refSafeMultiplyInt64(T x, T y, T* result)
 {
-	*result = toInt64(static_cast<uint64_t>(x) * static_cast<uint64_t>(y));
+	*result = toInt64<T>(static_cast<uint64_t>(x) * static_cast<uint64_t>(y));
 	if (x == 0)
 		return false;
-	if (x == -1)
-		return y == std::numeric_limits<int64_t>::min();
+	if (std::is_signed<T>::value && x == -1)
+		return y == std::numeric_limits<T>::lowest();
 	return *result / x != y;
 }
 
 int errorCount = 0;
 
-//! Check that safeMultiplyInt64 and refSafeMultiply64 agree for x*y.
-void check(int64_t x, int64_t y)
+//! Check that safeMultiplyInt64 and refSafeMultiplyInt64 agree for x*y.
+//! Check that safeMultiplyUInt64 and refSafeMultiplyUInt64 agree for x*y.
+template <typename T>
+void check(T x, T y)
 {
-	int64_t actualResult, refResult;
+	T actualResult, refResult;
 	bool actualOverflow = safeMultiplyInt64(x, y, &actualResult);
 	bool refOverflow = refSafeMultiplyInt64(x, y, &refResult);
 	if (actualOverflow != refOverflow || actualResult != refResult)
@@ -52,45 +58,50 @@ void check(int64_t x, int64_t y)
 	}
 }
 
-// Check 
-void checkNear(int64_t x, int64_t y)
+// Check
+template <typename T>
+void checkNear(T x, T y)
 {
 	for (int64_t i = -8; i <= 8; ++i)
 		for (int64_t j = -8; j <= 8; ++j)
 			check(wrappingAdd(x, i), wrappingAdd(y, j));
 }
 
-void test()
+template <typename T>
+void test(char const* type)
 {
+	std::cout << "Testing " << type;
 	std::random_device rd;
 	std::mt19937_64 gen(rd());
-	std::uniform_int_distribution<int64_t> dist(std::numeric_limits<int64_t>::lowest(), std::numeric_limits<int64_t>::max());
+	std::uniform_int_distribution<T> dist(std::numeric_limits<T>::lowest(), std::numeric_limits<T>::max());
 
 	// Test values at extremes and near 0.
-	for (int64_t x : {static_cast<int64_t>(0), std::numeric_limits<int64_t>::max()})
-		for (int64_t y : {static_cast<int64_t>(0), std::numeric_limits<int64_t>::max()})
+	for (int64_t x : {static_cast<T>(0), std::numeric_limits<T>::max()})
+		for (int64_t y : {static_cast<T>(0), std::numeric_limits<T>::max()})
 			checkNear(x, y);
 
 	// Test products that are near the representable extremes.
 	for (int32_t trial = 0; trial < 100000; ++trial)
 	{
 		// Choose first factor. The loop covers a wide dynamic range.
-		for (int64_t x = dist(gen); x != 0; x /= 2)
+		for (T x = dist(gen); x != 0; x /= 2)
 		{
 			// Choose second factor so that product is close to upper bound of int64_t.
-			checkNear(x, std::numeric_limits<int64_t>::max() / x);
-			if (x != -1)
+			checkNear(x, std::numeric_limits<T>::max() / x);
+			if (std::numeric_limits<T>::min() != 0 && x != -1)
 				// Choose second factor so that product is close to lower bound of int64_t.
-				checkNear(x, std::numeric_limits<int64_t>::min() / x);
+				checkNear(x, std::numeric_limits<T>::min() / x);
 		}
 		if (trial % 1000 == 999)
 			std::cout << "." << std::flush;
 	}
+	std::cout << std::endl;
 }
 
 int main()
 {
-	test();
+	test<uint64_t>("uint64_t");
+	test<int64_t>("int64_t");
 	if (errorCount == 0)
 		std::cout << "No errors found" << std::endl;
 	return errorCount != 0;
